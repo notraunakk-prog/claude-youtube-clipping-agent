@@ -1,7 +1,81 @@
 
+import os
+import re
+import json
+import urllib.parse
+import urllib.request
+from mcp.server.fastmcp import FastMCP
+
+# Initialize MCP server FIRST
+mcp = FastMCP(
+    "YouTube Clipping Agent",
+    host="0.0.0.0",
+    port=int(os.environ.get("PORT", "10000"))
+)
+
+
+@mcp.tool()
+def agent_status():
+    """Check the YouTube Clipping Agent status."""
+    return {
+        "name": "YouTube Clipping Agent",
+        "status": "Online",
+        "tools": [
+            "agent_status",
+            "inspect_video_url",
+            "detect_highlights"
+        ]
+    }
+
+
+@mcp.tool()
+def inspect_video_url(url: str):
+    """Get public information about a YouTube video."""
+
+    parsed = urllib.parse.urlparse(url)
+
+    allowed_hosts = {
+        "youtube.com",
+        "www.youtube.com",
+        "m.youtube.com",
+        "youtu.be"
+    }
+
+    if parsed.scheme != "https" or parsed.hostname not in allowed_hosts:
+        return {"error": "Invalid HTTPS YouTube URL."}
+
+    endpoint = (
+        "https://www.youtube.com/oembed?url="
+        + urllib.parse.quote(url, safe="")
+        + "&format=json"
+    )
+
+    try:
+        request = urllib.request.Request(
+            endpoint,
+            headers={"User-Agent": "Mozilla/5.0"}
+        )
+
+        with urllib.request.urlopen(request, timeout=15) as response:
+            data = json.loads(response.read().decode("utf-8"))
+
+        return {
+            "title": data.get("title"),
+            "creator": data.get("author_name"),
+            "thumbnail": data.get("thumbnail_url"),
+            "status": "URL checked successfully"
+        }
+
+    except Exception as error:
+        return {
+            "error": "Video information unavailable.",
+            "details": str(error)[:200]
+        }
+
+
 @mcp.tool()
 def detect_highlights(transcript: str):
-    """Select up to five highlight clips from Hindi or English SRT."""
+    """Find up to five possible highlights in Hindi or English SRT."""
 
     if not transcript.strip():
         return {"error": "Transcript is empty."}
@@ -42,15 +116,18 @@ def detect_highlights(transcript: str):
                     "end_seconds": end,
                     "text": text
                 })
+
             break
 
     if not segments:
-        return {"error": "No timestamped SRT segments found."}
+        return {
+            "error": "No timestamped SRT segments found."
+        }
 
     keyword_groups = {
         "hook": [
             "secret", "amazing", "surprise", "incredible",
-            "you won't believe", "आज", "हैरान", "अविश्वसनीय"
+            "you won't believe", "हैरान", "अविश्वसनीय", "राज"
         ],
         "suspense": [
             "mystery", "mysterious", "shocking", "unexpected",
@@ -97,7 +174,7 @@ def detect_highlights(transcript: str):
         if not overlaps:
             selected.append(candidate)
 
-        if len(selected) == 5:
+        if len(selected) >= 5:
             break
 
     selected.sort(key=lambda item: item["start_seconds"])
@@ -108,7 +185,7 @@ def detect_highlights(transcript: str):
         "highlights": selected,
         "max_clips": 5,
         "language_support": ["Hindi", "English"],
-        "note": "Keyword-based suggestions. Review clips before publishing."
+        "note": "Keyword-based suggestions. Review before editing."
     }
 
 
