@@ -2,7 +2,11 @@
 import os
 from mcp.server.fastmcp import FastMCP
 
-mcp = FastMCP("YouTube Clipping Agent")
+mcp = FastMCP(
+    "YouTube Clipping Agent",
+    host="0.0.0.0",
+    port=int(os.environ.get("PORT", "10000"))
+)
 
 @mcp.tool()
 def agent_status():
@@ -14,15 +18,12 @@ def agent_status():
             "Video highlight detection",
             "Live stream recording highlights",
             "Vertical 9:16 Shorts editing",
-            "English and Hindi subtitles",
-            "YouTube video uploading"
-        ]
+            "Hindi subtitles",
+            "YouTube uploading"
+        ],
+        "message": "MCP server is running."
     }
 
 if __name__ == "__main__":
-    mcp.run(
-        transport="streamable-http",
-        host="0.0.0.0",
-        port=int(os.environ.get("PORT", "10000"))
-    )
+    mcp.run(transport="streamable-http")
     
