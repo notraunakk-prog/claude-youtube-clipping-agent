@@ -281,6 +281,66 @@ async def upload_page(request: Request):
           }
         });
       </script>
+const form = document.getElementById("uploadForm");
+const result = document.getElementById("result");
+
+form.addEventListener("submit", (event) => {
+  event.preventDefault();
+
+  const fileInput = form.querySelector('input[type="file"]');
+  const file = fileInput.files[0];
+
+  if (!file) {
+    result.textContent = "Please select a video.";
+    return;
+  }
+
+  const xhr = new XMLHttpRequest();
+
+  result.textContent = "Preparing upload...";
+
+  xhr.open("POST", "/upload", true);
+  xhr.timeout = 180000;
+
+  xhr.upload.onprogress = (event) => {
+    if (event.lengthComputable) {
+      const percent = Math.round(
+        (event.loaded / event.total) * 100
+      );
+      result.textContent = "Uploading: " + percent + "%";
+    }
+  };
+
+  xhr.onload = () => {
+    let data;
+
+    try {
+      data = JSON.parse(xhr.responseText);
+    } catch {
+      result.textContent =
+        "Server response error: " + xhr.status;
+      return;
+    }
+
+    result.textContent = JSON.stringify(data, null, 2);
+
+    if (xhr.status >= 200 && xhr.status < 300) {
+      form.reset();
+    }
+  };
+
+  xhr.onerror = () => {
+    result.textContent = "Network error. Please try again.";
+  };
+
+  xhr.ontimeout = () => {
+    result.textContent = "Upload timed out. Please try again.";
+  };
+
+  xhr.send(new FormData(form));
+});
+</script>
+
     </body>
     </html>
     """)
