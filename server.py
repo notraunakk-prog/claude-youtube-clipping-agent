@@ -2,7 +2,6 @@
 import os
 import re
 import json
-import html
 import uuid
 import secrets
 import urllib.parse
@@ -45,10 +44,8 @@ def inspect_video_url(url: str):
     parsed = urllib.parse.urlparse(url)
 
     allowed_hosts = {
-        "youtube.com",
-        "www.youtube.com",
-        "m.youtube.com",
-        "youtu.be"
+        "youtube.com", "www.youtube.com",
+        "m.youtube.com", "youtu.be"
     }
 
     if parsed.scheme != "https" or parsed.hostname not in allowed_hosts:
@@ -61,12 +58,12 @@ def inspect_video_url(url: str):
     )
 
     try:
-        request = urllib.request.Request(
+        req = urllib.request.Request(
             endpoint,
             headers={"User-Agent": "Mozilla/5.0"}
         )
 
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with urllib.request.urlopen(req, timeout=15) as response:
             data = json.loads(response.read().decode("utf-8"))
 
         return {
@@ -136,12 +133,12 @@ def detect_highlights(transcript: str):
 
     for item in segments:
         text = item["text"].lower()
-        score = sum(2 for word in keywords if word in text)
+        item["score"] = sum(
+            2 for word in keywords if word in text
+        )
 
         if len(text.split()) >= 8:
-            score += 1
-
-        item["score"] = score
+            item["score"] += 1
 
     ranked = sorted(
         segments,
@@ -192,250 +189,232 @@ def list_uploaded_videos():
 @mcp.custom_route("/", methods=["GET"])
 async def upload_page(request: Request):
     return HTMLResponse("""
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta name="viewport" content="width=device-width, initial-scale=1">
-      <title>YouTube Shorts Agent</title>
-      <style>
-        body {
-          font-family: Arial, sans-serif;
-          background: #111827;
-          color: white;
-          padding: 25px;
-        }
-        .box {
-          max-width: 450px;
-          margin: 50px auto;
-          background: #1f2937;
-          padding: 25px;
-          border-radius: 16px;
-        }
-        input, button {
-          width: 100%;
-          box-sizing: border-box;
-          padding: 14px;
-          margin-top: 15px;
-          border-radius: 8px;
-        }
-        button {
-          background: #2563eb;
-          color: white;
-          border: 0;
-          font-weight: bold;
-        }
-        #result {
-          white-space: pre-wrap;
-          overflow-wrap: anywhere;
-        }
-      </style>
-    </head>
-    <body>
-      <div class="box">
-        <h2>Video Upload</h2>
-        <p>Upload an MP4 video for Shorts processing.</p>
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YouTube Shorts Agent</title>
+<style>
+body {
+  font-family: Arial;
+  background: #111827;
+  color: white;
+  padding: 20px;
+}
+.box {
+  max-width: 450px;
+  margin: 40px auto;
+  background: #1f2937;
+  padding: 25px;
+  border-radius: 16px;
+}
+input, button {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 14px;
+  margin-top: 15px;
+  border-radius: 8px;
+}
+button {
+  background: #2563eb;
+  color: white;
+  border: 0;
+  font-weight: bold;
+}
+#result {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+</style>
+</head>
+<body>
+<div class="box">
+<h2>YouTube Video Upload</h2>
+<p>Upload an MP4 video (maximum 50 MB).</p>
 
-        <form id="uploadForm">
-          <label>Private upload token</label>
-          <input
-            type="password"
-            name="token"
-            required
-            autocomplete="off"
-          >
+<form id="uploadForm">
+<label>Private Upload Token</label>
+<input type="password" name="token" required>
 
-          <label>Select MP4 video</label>
-          <input
-            type="file"
-            name="video"
-            accept=".mp4,video/mp4"
-            required
-          >
+<label>Select MP4 Video</label>
+<input type="file" name="video" accept=".mp4,video/mp4" required>
 
-          <button type="submit">Upload Video</button>
-        </form>
+<button id="uploadButton" type="submit">Upload Video</button>
+</form>
 
-        <p id="result"></p>
-      </div>
+<p id="result">Ready to upload.</p>
+</div>
 
-      <script>
-        const form = document.getElementById("uploadForm");
-        const result = document.getElementById("result");
-
-        form.addEventListener("submit", async (event) => {
-          event.preventDefault();
-          result.textContent = "Uploading...";
-
-          try {
-            const response = await fetch("/upload", {
-              method: "POST",
-              body: new FormData(form)
-            });
-
-            const data = await response.json();
-            result.textContent = JSON.stringify(data, null, 2);
-
-            if (response.ok) form.reset();
-          } catch (error) {
-            result.textContent = "Upload failed. Please try again.";
-          }
-        });
-      </script>
+<script>
 const form = document.getElementById("uploadForm");
 const result = document.getElementById("result");
+const button = document.getElementById("uploadButton");
 
-form.addEventListener("submit", (event) => {
+form.addEventListener("submit", function(event) {
   event.preventDefault();
 
-  const fileInput = form.querySelector('input[type="file"]');
-  const file = fileInput.files[0];
+  const file = form.querySelector('input[type="file"]').files[0];
 
   if (!file) {
     result.textContent = "Please select a video.";
     return;
   }
 
+  if (file.size > 50 * 1024 * 1024) {
+    result.textContent = "Maximum file size is 50 MB.";
+    return;
+  }
+
   const xhr = new XMLHttpRequest();
 
-  result.textContent = "Preparing upload...";
+  button.disabled = true;
+  button.textContent = "Uploading...";
+  result.textContent = "Starting upload...";
 
   xhr.open("POST", "/upload", true);
   xhr.timeout = 180000;
 
-  xhr.upload.onprogress = (event) => {
+  xhr.upload.onprogress = function(event) {
     if (event.lengthComputable) {
       const percent = Math.round(
-        (event.loaded / event.total) * 100
+        event.loaded / event.total * 100
       );
       result.textContent = "Uploading: " + percent + "%";
     }
   };
 
-  xhr.onload = () => {
-    let data;
+  xhr.onload = function() {
+    button.disabled = false;
+    button.textContent = "Upload Video";
 
     try {
-      data = JSON.parse(xhr.responseText);
-    } catch {
+      const data = JSON.parse(xhr.responseText);
+      result.textContent = JSON.stringify(data, null, 2);
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        form.reset();
+      }
+    } catch (error) {
       result.textContent =
-        "Server response error: " + xhr.status;
-      return;
-    }
-
-    result.textContent = JSON.stringify(data, null, 2);
-
-    if (xhr.status >= 200 && xhr.status < 300) {
-      form.reset();
+        "Server response error. HTTP " + xhr.status;
     }
   };
 
-  xhr.onerror = () => {
-    result.textContent = "Network error. Please try again.";
+  xhr.onerror = function() {
+    button.disabled = false;
+    button.textContent = "Upload Video";
+    result.textContent = "Network error.";
   };
 
-  xhr.ontimeout = () => {
-    result.textContent = "Upload timed out. Please try again.";
+  xhr.ontimeout = function() {
+    button.disabled = false;
+    button.textContent = "Upload Video";
+    result.textContent = "Upload timed out.";
   };
 
   xhr.send(new FormData(form));
 });
 </script>
-
-    </body>
-    </html>
-    """)
+</body>
+</html>
+""")
 
 
 @mcp.custom_route("/upload", methods=["POST"])
 async def upload_video(request: Request):
+    print("UPLOAD ROUTE HIT", flush=True)
+
     expected_token = os.environ.get("UPLOAD_TOKEN")
 
     if not expected_token:
+        print("UPLOAD_TOKEN is missing", flush=True)
         return JSONResponse(
             {"error": "Upload security is not configured."},
             status_code=503
         )
 
-    form = await request.form()
-    supplied_token = str(form.get("token", ""))
-
-    if not secrets.compare_digest(supplied_token, expected_token):
-        return JSONResponse(
-            {"error": "Invalid upload token."},
-            status_code=401
-        )
-
-    video = form.get("video")
-
-    if not video or not getattr(video, "filename", None):
-        return JSONResponse(
-            {"error": "Please select an MP4 video."},
-            status_code=400
-        )
-
-    if Path(video.filename).suffix.lower() != ".mp4":
-        return JSONResponse(
-            {"error": "Only MP4 files are accepted."},
-            status_code=400
-        )
-
-    video_id = uuid.uuid4().hex
-    destination = UPLOAD_DIR / f"{video_id}.mp4"
-    total_size = 0
-
     try:
-        with destination.open("wb") as output:
-            while True:
-                chunk = await video.read(1024 * 1024)
+        form = await request.form()
+        supplied_token = str(form.get("token", ""))
 
-                if not chunk:
-                    break
-
-                total_size += len(chunk)
-
-                if total_size > MAX_UPLOAD_SIZE:
-                    output.close()
-                    destination.unlink(missing_ok=True)
-
-                    return JSONResponse(
-                        {"error": "Maximum upload size is 50 MB."},
-                        status_code=413
-                    )
-
-                output.write(chunk)
-
-        if total_size == 0:
-            destination.unlink(missing_ok=True)
+        if not secrets.compare_digest(supplied_token, expected_token):
+            print("Invalid upload token", flush=True)
             return JSONResponse(
-                {"error": "The uploaded file is empty."},
+                {"error": "Invalid upload token."},
+                status_code=401
+            )
+
+        video = form.get("video")
+
+        if not video or not getattr(video, "filename", None):
+            return JSONResponse(
+                {"error": "Please select an MP4 video."},
                 status_code=400
             )
 
-        safe_name = Path(video.filename).name[:100]
+        if Path(video.filename).suffix.lower() != ".mp4":
+            return JSONResponse(
+                {"error": "Only MP4 files are accepted."},
+                status_code=400
+            )
 
-        uploaded_videos[video_id] = {
-            "filename": safe_name,
-            "path": str(destination),
-            "size_bytes": total_size
-        }
+        video_id = uuid.uuid4().hex
+        destination = UPLOAD_DIR / (video_id + ".mp4")
+        total_size = 0
 
-        return JSONResponse({
-            "status": "Upload successful",
-            "video_id": video_id,
-            "filename": safe_name,
-            "size_bytes": total_size,
-            "next_step": "Video is uploaded. Editing is not enabled yet."
-        })
+        try:
+            with destination.open("wb") as output:
+                while True:
+                    chunk = await video.read(1024 * 1024)
 
-    except Exception:
-        destination.unlink(missing_ok=True)
+                    if not chunk:
+                        break
+
+                    total_size += len(chunk)
+
+                    if total_size > MAX_UPLOAD_SIZE:
+                        destination.unlink(missing_ok=True)
+                        return JSONResponse(
+                            {"error": "Maximum upload size is 50 MB."},
+                            status_code=413
+                        )
+
+                    output.write(chunk)
+
+            if total_size == 0:
+                destination.unlink(missing_ok=True)
+                return JSONResponse(
+                    {"error": "Uploaded file is empty."},
+                    status_code=400
+                )
+
+            safe_name = Path(video.filename).name[:100]
+
+            uploaded_videos[video_id] = {
+                "filename": safe_name,
+                "path": str(destination),
+                "size_bytes": total_size
+            }
+
+            print("UPLOAD SUCCESS:", video_id, flush=True)
+
+            return JSONResponse({
+                "status": "Upload successful",
+                "video_id": video_id,
+                "filename": safe_name,
+                "size_bytes": total_size,
+                "next_step": "Upload complete. Editing is not enabled yet."
+            })
+
+        finally:
+            await video.close()
+
+    except Exception as error:
+        print("UPLOAD ERROR:", repr(error), flush=True)
         return JSONResponse(
-            {"error": "Upload could not be completed."},
+            {"error": "Upload failed. Check Render logs."},
             status_code=500
         )
-
-    finally:
-        await video.close()
 
 
 if __name__ == "__main__":
