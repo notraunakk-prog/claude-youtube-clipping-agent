@@ -1,70 +1,7 @@
 
-import os
-import json
-import re
-import urllib.parse
-import urllib.request
-from mcp.server.fastmcp import FastMCP
-
-mcp = FastMCP(
-    "YouTube Clipping Agent",
-    host="0.0.0.0",
-    port=int(os.environ.get("PORT", "10000"))
-)
-
-
-@mcp.tool()
-def agent_status():
-    """Check the agent status."""
-    return {
-        "name": "YouTube Clipping Agent",
-        "status": "Online"
-    }
-
-
-@mcp.tool()
-def inspect_video_url(url: str):
-    """Get public YouTube video information."""
-    parsed = urllib.parse.urlparse(url)
-    allowed_hosts = {
-        "youtube.com",
-        "www.youtube.com",
-        "m.youtube.com",
-        "youtu.be"
-    }
-
-    if parsed.scheme != "https" or parsed.hostname not in allowed_hosts:
-        return {"error": "Invalid YouTube URL."}
-
-    endpoint = (
-        "https://www.youtube.com/oembed?url="
-        + urllib.parse.quote(url, safe="")
-        + "&format=json"
-    )
-
-    try:
-        request = urllib.request.Request(
-            endpoint,
-            headers={"User-Agent": "Mozilla/5.0"}
-        )
-
-        with urllib.request.urlopen(request, timeout=15) as response:
-            data = json.loads(response.read().decode("utf-8"))
-
-        return {
-            "title": data.get("title"),
-            "creator": data.get("author_name"),
-            "thumbnail": data.get("thumbnail_url"),
-            "status": "URL checked successfully"
-        }
-
-    except Exception:
-        return {"error": "Video information unavailable."}
-
-
 @mcp.tool()
 def detect_highlights(transcript: str):
-    """Find interesting sections in Hindi or English SRT transcripts."""
+    """Select up to five highlight clips from Hindi or English SRT."""
 
     if not transcript.strip():
         return {"error": "Transcript is empty."}
@@ -75,10 +12,6 @@ def detect_highlights(transcript: str):
         r"(\d{1,2}):(\d{2}):(\d{2})(?:[,.]\d+)?"
     )
 
-    bracket_pattern = (
-        r"\[(\d{1,2}):(\d{2}):(\d{2})\]\s*(.*)"
-    )
-
     def to_seconds(h, m, s):
         return int(h) * 3600 + int(m) * 60 + int(s)
 
@@ -87,81 +20,98 @@ def detect_highlights(transcript: str):
     for block in re.split(r"\n\s*\n", transcript.strip()):
         lines = block.strip().splitlines()
 
-        if not lines:
-            continue
-
         for index, line in enumerate(lines):
             match = re.search(timestamp_pattern, line.strip())
 
-            if match:
-                groups = match.groups()
-                start = to_seconds(*groups[:3])
-                end = to_seconds(*groups[3:6])
+            if not match:
+                continue
 
-                text = " ".join(
-                    item.strip()
-                    for item in lines[index + 1:]
-                    if item.strip()
-                )
+            groups = match.groups()
+            start = to_seconds(*groups[:3])
+            end = to_seconds(*groups[3:6])
 
-                if not text:
-                    text = line[match.end():].strip()
+            text = " ".join(
+                item.strip()
+                for item in lines[index + 1:]
+                if item.strip()
+            )
 
-                if end > start and text:
-                    segments.append({
-                        "start_seconds": start,
-                        "end_seconds": end,
-                        "text": text
-                    })
-
-                break
-
-        else:
-            for line in lines:
-                match = re.search(bracket_pattern, line.strip())
-
-                if match:
-                    h, m, s, text = match.groups()
-                    start = to_seconds(h, m, s)
-
-                    if text.strip():
-                        segments.append({
-                            "start_seconds": start,
-                            "end_seconds": start + 15,
-                            "text": text.strip()
-                        })
+            if end > start and text:
+                segments.append({
+                    "start_seconds": start,
+                    "end_seconds": end,
+                    "text": text
+                })
+            break
 
     if not segments:
-        return {
-            "error": "No timestamped transcript segments found."
-        }
+        return {"error": "No timestamped SRT segments found."}
 
-    keywords = [
-        "लेकिन", "क्योंकि", "रहस्य", "अविश्वसनीय",
-        "सच", "चौंकाने", "पहली बार",
-        "secret", "amazing", "shocking",
-        "surprising", "however", "finally",
-        "impossible", "mystery", "why", "how"
-    ]
+    keyword_groups = {
+        "hook": [
+            "secret", "amazing", "surprise", "incredible",
+            "you won't believe", "आज", "हैरान", "अविश्वसनीय"
+        ],
+        "suspense": [
+            "mystery", "mysterious", "shocking", "unexpected",
+            "रहस्य", "चौंकाने", "अचानक", "लेकिन", "क्योंकि"
+        ],
+        "story": [
+            "finally", "discovered", "revealed", "first time",
+            "खुलासा", "पता चला", "पहली बार", "आखिरकार"
+        ]
+    }
 
     for segment in segments:
         text = segment["text"].lower()
-        segment["score"] = sum(
-            1 for word in keywords if word in text
-        )
+        reasons = []
+        score = 0
 
-    segments.sort(
+        for category, words in keyword_groups.items():
+            if any(word in text for word in words):
+                score += 2
+                reasons.append(category)
+
+        if len(text.split()) >= 8:
+            score += 1
+            reasons.append("context")
+
+        segment["score"] = score
+        segment["reasons"] = reasons or ["Needs manual review"]
+
+    ranked = sorted(
+        segments,
         key=lambda item: item["score"],
         reverse=True
     )
 
+    selected = []
+
+    for candidate in ranked:
+        overlaps = any(
+            candidate["start_seconds"] < item["end_seconds"]
+            and candidate["end_seconds"] > item["start_seconds"]
+            for item in selected
+        )
+
+        if not overlaps:
+            selected.append(candidate)
+
+        if len(selected) == 5:
+            break
+
+    selected.sort(key=lambda item: item["start_seconds"])
+
     return {
         "total_segments": len(segments),
-        "highlights": segments[:5],
-        "note": "Keyword-based suggestions. Review before editing."
+        "clips_found": len(selected),
+        "highlights": selected,
+        "max_clips": 5,
+        "language_support": ["Hindi", "English"],
+        "note": "Keyword-based suggestions. Review clips before publishing."
     }
 
 
 if __name__ == "__main__":
     mcp.run(transport="streamable-http")
-                
+    
